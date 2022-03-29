@@ -20,7 +20,7 @@ broodstock.length <- read.csv("../raw-data/broodstock-length-data.csv", header=T
 
 # Change factor orders for plots 
 broodstock.length$pH <- factor(broodstock.length$pH, levels = c("Pre-pH",  "Low", "Ambient"))
-broodstock.length$Population <- factor(broodstock.length$Population, levels = c("HL", "NF", "SN"))
+broodstock.length$Population <- factor(broodstock.length$Population, levels = c("HL", "NF", "SN", "K"))
 broodstock.length$Temperature <- factor(broodstock.length$Temperature, levels = c(6, 10))
 brood.col.lengths <- c("white","gray55","gray85")[as.numeric(broodstock.length$pH)]
 names(brood.col.lengths) <-broodstock.length$pH
@@ -45,12 +45,36 @@ ggplot(data = subset(broodstock.length, pH!="Pre-pH"), aes(x=Temperature:pH, y=L
 # Size by pH (after pH exposures)
 ggplot(data = broodstock.length, aes(x=pH, y=Length, col=pH)) + 
     theme_minimal() + geom_boxplot() + 
+    geom_jitter()
+
+# Weight by pH (after pH exposures)
+ggplot(data = broodstock.length, aes(x=pH, y=Weight, col=pH)) + 
+    theme_minimal() + geom_boxplot() + 
+    geom_jitter()
+
+# Size by pH (after pH exposures) - each population 
+ggplot(data = broodstock.length, aes(x=pH, y=Length, col=pH)) + 
+    theme_minimal() + geom_boxplot() + 
+    geom_jitter() + facet_wrap(~Population, nrow = 1)
+
+# weight by pH (after pH exposures) - each population
+ggplot(data = broodstock.length, aes(x=pH, y=Weight, col=pH)) + 
+    theme_minimal() + geom_boxplot() + 
     geom_jitter() + facet_wrap(~Population, nrow = 1)
 
 # Size by temp & pH (after pH exposures)
-ggplot(data = broodstock.length, aes(x=Temperature:pH, y=Length)) + 
-    theme_minimal() + geom_boxplot() + 
-    geom_jitter(aes(col=Population)) #+ facet_wrap(~Population, nrow = 1)
+require(plotly)
+ggplotly(ggplot(data = subset(broodstock.length, Population!="K"), aes(x=Temperature:pH, y=Length)) + 
+    theme_minimal() + geom_boxplot() + theme(axis.text.x=element_text(angle=45)) +
+    geom_jitter(aes(col=Population)))
+
+ggplotly(ggplot(data = subset(broodstock.length, Population!="K" & pH!="Pre-pH"), aes(x=Temperature:fct_rev(pH), y=Length)) + 
+    theme_minimal() + geom_boxplot() + theme(axis.text.x=element_text(angle=45)) +
+    geom_jitter(aes(col=Population)))
+
+ggplotly(ggplot(data = subset(broodstock.length, Population!="K"), aes(x=Temperature:pH, y=Length)) + 
+    theme_minimal() + geom_boxplot() + theme(axis.text.x=element_text(angle=45)) +
+    geom_jitter(aes(col=Population)) + facet_wrap(~Population, nrow = 1))
 ```
 
 
@@ -59,7 +83,10 @@ ggplot(data = broodstock.length, aes(x=Temperature:pH, y=Length)) +
 aggregate(Length ~ Population + pH + Temperature, data=broodstock.length, mean)
 aggregate(Length ~ Population + pH, data=broodstock.length, mean)
 aggregate(Length ~ Population, data=broodstock.length, mean)
+
+# Mean length pre-pH treatment 
 aggregate(Length ~ Population, data=subset(broodstock.length, pH!="Pre-pH"), mean)
+aggregate(Length ~ Population, data=subset(broodstock.length, pH!="Pre-pH"), sd)
 ```
 
 # Check length data for normality 
@@ -84,9 +111,9 @@ anova(lm(Length ~ pH, data=subset(broodstock.length, pH!="Pre-pH"))) #No
 # Length differences after pH treatments compared to before? 
 
 ```{r}
-anova(lm(Length ~ pH + Temperature:pH, data=broodstock.length)) #no interaction. Assess using type II sums of squares, where I look at effects of pH and temperature after controlling for the other factor 
+Anova(lm(Length ~ Temperature*pH, data=broodstock.length), type=2) #no interaction. Assess using type II sums of squares, where I look at effects of pH and temperature after controlling for the other factor 
 Anova(lm(Length ~ pH + Temperature:pH, data=broodstock.length), type=2) #pH sign. BUT that includes a "pre-pH" treat - so need to check that out. 
-TukeyHSD(aov(Length ~ pH, data=broodstock.length), type=2) #both sign. 
+TukeyHSD(aov(Length ~ pH, data=broodstock.length), type=2) 
 ```
 
 Try mixed effect model, with Population as random effect
@@ -95,35 +122,55 @@ Try mixed effect model, with Population as random effect
 display(lmer(Length ~ Temperature*pH + (1|Population), data=broodstock.length))
 Anova(lmer(Length ~ Temperature*pH + (1|Population), data=broodstock.length), type=2)
 
-display(lmer(Length ~ Temperature+pH+ (1|Population), data=broodstock.length)) 
-Anova(lmer(Length ~ Temperature+pH + (1|Population), data=broodstock.length), type=2) #with Pop as random effect and using type II SS, still sign. influence of temp and pH 
+display(lmer(Length ~ pH+ (1|Population), data=broodstock.length)) 
+Anova(lmer(Length ~ pH + (1|Population), data=broodstock.length), type=2) #with Pop as random effect and using type II SS, still sign. influence of temp and pH. But remember "pH" still includes the pre=pCO2 treatment 
 ```
+
+# ============= I think the most appropriate stats begin here! =================
 # Compare sizes by each population 
 
 Test for sign. differences among treatments _after_ temperature treatments but _before_ pCO2 treatments  
 
 ```{r}
-anova(lm(Length ~ Population*Temperature, data=subset(broodstock.length, pH=="Pre-pH"))) #No eff. of temp, but definitely Pop=specific size 
+summary(aov(Length ~ Population*Temperature, data=subset(broodstock.length, pH=="Pre-pH"))) #No eff. of temp, but definitely Pop=specific size 
+TukeyHSD(aov(Length ~ Population, data=subset(broodstock.length, pH=="Pre-pH")))
 ```
 
 # Length differences after pH treatments? 
 
 ```{r}
-anova(lm(Length ~ Population*pH, data=subset(broodstock.length, pH!="Pre-pH"))) #No diff. among pH treatments, nor interaction 
+summary(aov(Length ~ Population*Temperature*pH, data=subset(broodstock.length, pH!="Pre-pH"))) #No diff. among temperature or pH treatments, nor interaction 
+TukeyHSD(aov(Length ~ Population*Temperature*pH, data=subset(broodstock.length, pH!="Pre-pH")))
+
+#what about weight?
+summary(aov(Weight ~ Population*Temperature*pH, data=subset(broodstock.length, pH!="Pre-pH"))) #No diff. among temperature or pH treatments, nor interaction 
 ```
 
 # Length differences after pH treatments compared to before? 
 
 ```{r}
-Anova(lm(Length ~ Temperature*pH, data=subset(broodstock.length, Population=="HL")), type=2) # Dabob Baby - no differences between any pco2 (pre, ambient, high)
+summary(aov(Length ~ pH/Population, data=broodstock.length)) # all combined - population and pH effects only, but that includes pre-pH)
 
-Anova(lm(Length ~ Temperature*pH, data=subset(broodstock.length, Population=="NF")), type=2) # Fidalgo Baby - yes, difference somewhere, but where? 
-TukeyHSD(aov(Length ~ pH, data=subset(broodstock.length, Population=="NF")), type=2) #FB larger after ambient pCO2 compared to before 
+# Now look at population-specific changes in size between pre-pCO2 and after ambient, high pCO2 
+summary(aov(Length ~ pH, data=subset(broodstock.length, Population=="HL"))) # Dabob Baby - no differences between any pco2 (pre, ambient, high)
+TukeyHSD(aov(Length ~ pH, data=subset(broodstock.length, Population=="HL")))
 
-Anova(lm(Length ~ Temperature*pH, data=subset(broodstock.length, Population=="SN")), type=2) # Oyster Baby - yes, difference somewhere, but where? 
+summary(aov(Length ~ pH, data=subset(broodstock.length, Population=="NF"))) # Fidalgo Baby - yes, difference somewhere, but where? 
+TukeyHSD(aov(Length ~ pH, data=subset(broodstock.length, Population=="NF"))) #FB kinda larger after ambient pCO2 compared to before 
 
-TukeyHSD(aov(Length ~ pH, data=subset(broodstock.length, Population=="SN")), type=2) #Oyster Bay much larger after ambient pCO2 compared to before 
+summary(aov(Length ~ pH, data=subset(broodstock.length, Population=="SN"))) # Oyster Baby - yes, difference somewhere, but where? 
+TukeyHSD(aov(Length ~ pH, data=subset(broodstock.length, Population=="SN"))) #Oyster Bay much larger after ambient pCO2 compared to before 
+
+
+# Any effect to weight? nope. 
+summary(aov(Weight ~ Population*Temperature*pH, data=broodstock.length)) # all combined - only population effect
+summary(aov(Weight ~ pH, data=subset(broodstock.length, Population=="HL"))) # Dabob Baby - no differences between any pco2 (pre, ambient, high)
+summary(aov(Weight ~ pH, data=subset(broodstock.length, Population=="NF"))) # Fidalgo Baby - no differences between any pco2 (pre, ambient, high)
+summary(aov(Weight ~ pH, data=subset(broodstock.length, Population=="SN"))) # Oyster Baby - no differences between any pco2 (pre, ambient, high)
 ```
+
+
+
 # =======
 # Figure 
 
@@ -200,4 +247,153 @@ ggplot(broodstock.length, aes(x=pH, y= Length)) +  geom_boxplot(outlier.shape = 
     guides(colour = guide_legend(override.aes = list(size=4.5))) +
   facet_wrap(~Population, labeller = labeller(Population=c("HL"="Dabob Bay","NF"="Fidalgo Bay","SN"="Oyster Bay")))
 ```
+# Growth plot 
 
+```{r}
+b <- broodstock.length %>% 
+  group_by(Population, pH) %>%
+  summarise(mean=mean(Length), sd=sd(Length)) %>% ungroup() %>%
+  mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")) %>%
+  mutate(pH=str_replace(pH, "Pre-pH", "Ambient")) %>% 
+  rbind(., subset(., time=="Pre-pH") %>% mutate(pH=str_replace(pH, "Ambient", "Low"))) 
+
+c <- broodstock.length %>% 
+  group_by(pH) %>%
+  summarise(mean=mean(Length), sd=sd(Length)) %>% ungroup() %>%
+  mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")) %>%
+  mutate(pH=str_replace(pH, "Pre-pH", "Ambient")) %>% 
+  rbind(., subset(., time=="Pre-pH") %>% mutate(pH=str_replace(pH, "Ambient", "Low"))) 
+
+
+# ggdotplot(data= broodstock.length %>% mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")),
+#                 x="time", y= "Length", color="pH") + facet_wrap(~Population)
+# stat_summary(fun.data=mean_sdl, fun.args = list(mult=1), 
+#                  geom="pointrange", color="red") + 
+  #geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd), width=0.2, position=position_dodge(0.05)) +
+
+ggplot(data=broodstock.length %>% mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")),
+                        aes(x=fct_rev(time), y=Length, fill=pH)) + 
+  geom_dotplot(binaxis='y', stackdir='center', alpha=0.15, binwidth=1, col=NA) + 
+  facet_wrap(~Population, labeller = labeller(Population=c("HL"="Dabob Bay","NF"="Fidalgo Bay","SN"="Oyster Bay"))) +
+  scale_fill_manual(values=c("gray10","red","blue"), name="Treatment",
+                    labels=c("Ambient"="Control", "Low"="Acidification", "Pre-pH"="Pre-Treatment")) +
+  # scale_fill_manual(values=c("#67a9cf","#ef8a62"), name="Treatment",
+  #                    labels=c("Ambient"="Control", "Low"="Acidification", "Pre-pH"="Pre-Treatment")) +
+  geom_line(data=b, aes(x=fct_rev(time), y=mean, color=pH, group=pH)) + 
+  geom_point(data=b, aes(x=fct_rev(time), y=mean, fill=pH, group=pH), color="black", size=3.5, pch=22) + 
+  scale_color_manual(values=c("#67a9cf","#ef8a62"), guide="none") +
+  theme_bw(base_size = 12) + 
+  theme(plot.title = element_text(size = 14, hjust = 0, colour = "gray30"), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), panel.background = element_blank(), 
+        axis.title.x = element_blank(), legend.position="right", axis.text.x = element_text(size=8)) +  
+          labs(title=(expression(paste("Adult shell growth by ", pCO[2], " exposure & cohort"))), 
+               y=expression("Shell height (mm)")) + ylim(c(20,47))
+
+#show_col(c('#d1e5f0','#67a9cf','#fddbc7','#ef8a62'))
+
+
+# all populations combined 
+# copy 525 x 675
+ggplot(data=broodstock.length %>% mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")),
+                        aes(x=fct_rev(time), y=Length, fill=pH)) + 
+  geom_dotplot(binaxis='y', stackdir='center', alpha=0.3, binwidth=.75, col=NA) + 
+  #facet_wrap(~Population, labeller = labeller(Population=c("HL"="Dabob Bay","NF"="Fidalgo Bay","SN"="Oyster Bay"))) +
+  scale_fill_manual(values=c("gray75","#ef8a62","#67a9cf"), name="Treatment",
+                     labels=c("Ambient"="Control", "Low"="Acidification", "Pre-pH"="Pre-Treatment")) +
+  #scale_fill_manual(values=c("blue","red"), name="Treatment",
+  #                  labels=c("Ambient"="Control", "Low"="Acidification", "Pre-pH"="Pre-Treatment")) +
+  geom_line(data=c, aes(x=fct_rev(time), y=mean, color=pH, group=pH)) + 
+  geom_point(data=c, aes(x=fct_rev(time), y=mean, fill=pH, group=pH), color="black", size=4, pch=22) + 
+  scale_color_manual(values=c("#67a9cf","#ef8a62"), guide="none") +
+  theme_bw(base_size = 12) + 
+  theme(plot.title = element_text(size = 14, hjust = 0, colour = "gray30"), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), panel.background = element_blank(), 
+        axis.title.x = element_blank(), legend.position="right", axis.text.x = element_text(size=8)) +  
+          labs(title=(expression(paste("Adult shell growth by ", pCO[2], " exposure & cohort"))), 
+               y=expression("Shell height (mm)")) + ylim(c(20,47))
+```
+
+# Calculate delta, then compare 
+
+```{r}
+test <- broodstock.length %>% 
+  mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")) %>%
+  mutate(pH=str_replace(pH, "Pre-pH", "Ambient")) %>% 
+  rbind(., subset(., time=="Pre-pH") %>% mutate(pH=str_replace(pH, "Ambient", "Low"))) %>%
+  select(Sample, Population, pH, Length, time) %>%
+  left_join(b %>% filter(time=="Pre-pH") %>% select(Population, pH, mean), by = c("Population", "pH")) %>%
+  mutate(length.delta=Length-mean) %>% filter(time=="Post-pH") #%>%
+#  ggplot() + geom_violin(aes(x=Population, y=length.delta, fill=pH))
+
+hist(test$length.delta)
+summary(aov(length.delta ~ pH, data=subset(test, Population=="HL")))
+summary(aov(length.delta ~ pH, data=subset(test, Population=="NF")))
+summary(aov(length.delta ~ pH, data=subset(test, Population=="SN")))
+```
+
+
+# Weight change plot 
+
+```{r}
+d <- broodstock.length %>% 
+  group_by(Population, pH) %>%
+  summarise(mean=mean(Weight), sd=sd(Weight)) %>% ungroup() %>%
+  mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")) %>%
+  mutate(pH=str_replace(pH, "Pre-pH", "Ambient")) %>% 
+  rbind(., subset(., time=="Pre-pH") %>% mutate(pH=str_replace(pH, "Ambient", "Low"))) 
+
+e <- broodstock.length %>% 
+  group_by(pH) %>%
+  summarise(mean=mean(Weight), sd=sd(Weight)) %>% ungroup() %>%
+  mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")) %>%
+  mutate(pH=str_replace(pH, "Pre-pH", "Ambient")) %>% 
+  rbind(., subset(., time=="Pre-pH") %>% mutate(pH=str_replace(pH, "Ambient", "Low"))) 
+
+
+# ggdotplot(data= broodstock.length %>% mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")),
+#                 x="time", y= "Weight", color="pH") + facet_wrap(~Population)
+# stat_summary(fun.data=mean_sdl, fun.args = list(mult=1), 
+#                  geom="pointrange", color="red") + 
+  #geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd), width=0.2, position=position_dodge(0.05)) +
+
+ggplot(data=broodstock.length %>% mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")),
+                        aes(x=fct_rev(time), y=Weight, fill=pH)) + 
+  geom_dotplot(binaxis='y', stackdir='center', alpha=0.3, col=NA) + 
+  facet_wrap(~Population, labeller = labeller(Population=c("HL"="Dabob Bay","NF"="Fidalgo Bay","SN"="Oyster Bay"))) +
+  scale_fill_manual(values=c("gray75","#ef8a62","#67a9cf"), name="Treatment",
+                    labels=c("Ambient"="Control", "Low"="Acidification", "Pre-pH"="Pre-Treatment")) +
+  # scale_fill_manual(values=c("#67a9cf","#ef8a62"), name="Treatment",
+  #                    labels=c("Ambient"="Control", "Low"="Acidification", "Pre-pH"="Pre-Treatment")) +
+  geom_line(data=d, aes(x=fct_rev(time), y=mean, color=pH, group=pH)) + 
+  geom_point(data=d, aes(x=fct_rev(time), y=mean, fill=pH, group=pH), color="black", size=3.5, pch=22) + 
+  scale_color_manual(values=c("#67a9cf","#ef8a62"), guide="none") +
+  theme_bw(base_size = 12) + 
+  theme(plot.title = element_text(size = 14, hjust = 0, colour = "gray30"), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), panel.background = element_blank(), 
+        axis.title.x = element_blank(), legend.position="right", axis.text.x = element_text(size=8)) +  
+          labs(title=(expression(paste("Adult tissue growth by ", pCO[2], " exposure & cohort"))), 
+               y=expression("Tissue wet weight (g)")) 
+
+#show_col(c('#d1e5f0','#67a9cf','#fddbc7','#ef8a62'))
+
+
+# all populations combined 
+# copy 525 x 675
+ggplot(data=broodstock.length %>% mutate(time=str_replace(pH, "Low|Ambient", "Post-pH")),
+                        aes(x=fct_rev(time), y=Weight, fill=pH)) + 
+  geom_dotplot(binaxis='y', stackdir='center', alpha=0.3, binwidth=0.35, col=NA) + 
+  #facet_wrap(~Population, labeller = labeller(Population=c("HL"="Dabob Bay","NF"="Fidalgo Bay","SN"="Oyster Bay"))) +
+  scale_fill_manual(values=c("gray75","#ef8a62","#67a9cf"), name="Treatment",
+                     labels=c("Ambient"="Control", "Low"="Acidification", "Pre-pH"="Pre-Treatment")) +
+  #scale_fill_manual(values=c("blue","red"), name="Treatment",
+  #                  labels=c("Ambient"="Control", "Low"="Acidification", "Pre-pH"="Pre-Treatment")) +
+  geom_line(data=e, aes(x=fct_rev(time), y=mean, color=pH, group=pH)) + 
+  geom_point(data=e, aes(x=fct_rev(time), y=mean, fill=pH, group=pH), color="black", size=4, pch=22) + 
+  scale_color_manual(values=c("#67a9cf","#ef8a62"), guide="none") +
+  theme_bw(base_size = 12) + 
+  theme(plot.title = element_text(size = 14, hjust = 0, colour = "gray30"), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), panel.background = element_blank(), 
+        axis.title.x = element_blank(), legend.position="right", axis.text.x = element_text(size=8)) +  
+          labs(title=(expression(paste("Adult shell growth by ", pCO[2], " exposure & cohort"))), 
+               y=expression("Shell height (mm)"))
+```

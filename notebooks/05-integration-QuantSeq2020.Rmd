@@ -155,3 +155,458 @@ genes_plots
 ggplotly(genes_plots[[11]])
 ```
 
+# Merge larval sample counts from 2018 with larval sample counts from 2020 - can I compare? probably not, but just see. 
+
+```{r}
+
+load(file = "../results/gene-counts-filtered")
+
+counts.larvae.1820 <- counts.filtered[,larval.samples] %>% rownames_to_column(var = "gene") %>%
+  left_join(
+  counts.prelim[ , grepl(".L", names(counts.prelim))] %>% rownames_to_column(var = "gene"),
+  by = "gene") %>% column_to_rownames("gene")
+
+counts.larvae.1820.t <- t(counts.larvae.1820)
+```
+
+### Pre-filtering - remove rows (genes) with less than a total of 10 reads (across all samples) (why?)
+
+```{r}
+keep <- colSums(counts.larvae.1820.t) >= 100
+counts.larvae.1820.ts <- counts.larvae.1820.t[,keep]
+print(paste("# genes remaining after pre-filtering:", ncol(counts.larvae.1820.ts)))
+print(paste("# of genes dropped:", ncol(counts.larvae.1820.t) - ncol(counts.larvae.1820.ts), sep=" "))
+```
+
+### How many genes were identified in each sample?
+
+```{r}
+ggplotly(
+ggplot(data = data.frame(rowSums(counts.larvae.1820.ts != 0)) %>% 
+                  dplyr::rename(count.total = 1) %>% 
+                  rownames_to_column(var="sample")) +
+           geom_bar(aes(x=sample, y=count.total), stat = "identity") + ggtitle("Total # genes by sample after pre-filtering, larvae") + 
+             theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())) 
+```
+
+### Merge sample key info to count data, then sort, and generate heat map for initial inspection by treatment 
+```{r}
+key.larvae.1820 <- rbind(key.filtered %>% filter(stage=="larvae") %>% dplyr::select(filename, temp.parent, pCO2.parent, population),
+      key.prelim.filtered %>% filter(tissue=="larvae") %>% mutate(population="Oyster Bay C1") %>% mutate(pCO2.parent=pH) %>% 
+        mutate(pCO2.parent=gsub("Low", "High", pCO2.parent)) %>% dplyr::select(filename, temperature, pCO2.parent, population) %>% rename(temp.parent=temperature))
+
+counts.tsk.larvae.1820 <- merge(x=key.larvae.1820, by.x="filename", y=counts.larvae.1820.ts, by.y="row.names") %>% 
+  arrange(population, temp.parent, pCO2.parent)  %>% column_to_rownames(var="filename")
+
+head(counts.tsk.larvae.1820[1:24]) #check out results of merge/arrange
+```
+
+```{r}
+all(rownames(counts.tsk.larvae.1820) == counts.tsk.larvae.1820 %>% dplyr::select(starts_with("OLUR")) %>% t() %>% colnames()) #check that rownames of untransformed matrix match column names of transformed matrix. Should print 'TRUE' 
+```
+
+# Generate DESeq datasets with various treatment comparisons  
+
+```{r}
+#counts.DESeq <- counts.tsk.larvae[-which(rownames(counts.tsk.larvae) %in% "571_larvae"), grepl("OLUR", colnames(counts.tsk.larvae))] %>% t()
+#key.DESeq <- counts.tsk.larvae[-which(rownames(counts.tsk.larvae) %in% "571_larvae"),c("population", "pCO2.parent")] 
+
+dds.larvae.1820 <- DESeqDataSetFromMatrix(countData = counts.tsk.larvae.1820[,grepl("OLUR", colnames(counts.tsk.larvae.1820))] %>% t(),
+                              colData = counts.tsk.larvae.1820[,c("population", "temp.parent", "pCO2.parent")],  design = ~ population + temp.parent + pCO2.parent)
+```
+
+# Visualize data via PCAs and heat maps 
+
+## Transform data 
+
+- Here we transform counts using a variance stabilizing transformation (VST), since the rlog transformation threw an error and suggested using VST.  
+- Here we use `blind=FALSE` b/c we are interested in differences explained by experimental design, and may wish to use this transformed data in downstream analyses. 
+```{r}
+vsd.larvae.1820 <- varianceStabilizingTransformation(dds.larvae.1820, blind=FALSE)
+```
+
+## Visualize sample clustering via PCA (after transformation)
+
+NOTE: Hover over points to see the sample numbers
+
+```{r}
+# PCA with points color coded by population 
+ggplotly(
+plotPCA(vsd.larvae.1820, intgroup="population") + 
+           ggtitle("PCA by population (var-stabilizing transformed)") + 
+  geom_point(aes(size=vsd.larvae.1820$larval.day.collected, text=colnames(vsd.larvae.1820))) + theme_minimal() + stat_ellipse(), tooltip = "text")
+
+# PCA with points color coded by parental temperature treatment
+ggplotly(
+plotPCA(vsd.larvae.1820, intgroup="temp.parent") + 
+           ggtitle("PCA by population (var-stabilizing transformed)") + 
+  geom_point(size=3) + theme_minimal() + stat_ellipse(), tooltip = "text")
+
+# PCA with points color coded by parental pCO2 exposure 
+ggplotly(
+plotPCA(vsd.larvae.1820, intgroup="pCO2.parent") + 
+           ggtitle("PCA by parental pCO2 exposure (var-stabilizing transformed)") + 
+  geom_point(size=3, aes(text=colnames(vsd.larvae.1820))) + theme_minimal() + stat_ellipse(), tooltip = "text")
+
+# PCA with points color coded by temperature & parental pCO2 exposure 
+ggplotly(
+plotPCA(vsd.larvae.1820, intgroup=c("temp.parent", "pCO2.parent")) + 
+           ggtitle("PCA by parental pCO2 exposure (var-stabilizing transformed)") + 
+  geom_point(size=3, aes(text=colnames(vsd.larvae.1820))) + theme_minimal() + stat_ellipse(), tooltip = "text")
+
+# PCA with points color coded by population, and pco2 factors 
+ggplotly(
+plotPCA(vsd.larvae.1820, intgroup=c("population","pCO2.parent")) + 
+           ggtitle("PCA by population + parental pCO2 (var-stabilizing transformed)") + 
+  geom_point(size=3, aes(text=colnames(vsd.larvae.1820))) + theme_minimal() + stat_ellipse(), tooltip = "text")
+
+# PCA with points color coded by population, temperature, and pco2 factors 
+ggplotly(
+plotPCA(vsd.larvae.1820, intgroup=c("population","temp.parent", "pCO2.parent")) + 
+           ggtitle("PCA by population + parental pCO2 (var-stabilizing transformed)") + 
+  geom_point(aes(size=vsd.larvae.1820$larval.day.collected, text=colnames(vsd.larvae.1820))) + theme_minimal() + stat_ellipse(), tooltip = "text")
+
+# PCA with same 2 colors for all populations (for prelim. results presentation)
+ggplotly(
+  plotPCA(vsd.larvae.1820, intgroup=c("population","pCO2.parent")) + 
+           ggtitle("PCA by population + parental pCO2 (var-stabilizing transformed)") + 
+    geom_point(size=4, aes(text=colnames(vsd.larvae.1820))) + 
+    scale_color_manual(values = c("#F8766D","#00BFC4","#F8766D","#00BFC4","#F8766D","#00BFC4","#F8766D","#00BFC4")) + stat_ellipse(), tooltip = "text")
+
+
+PCA.data.larvae <- plotPCA(vsd.larvae.1820, intgroup=c("population","pCO2.parent"), returnData=TRUE)
+save(PCA.data.larvae, file="../results/PCA.data.larvae")
+```
+
+
+# Bubble plots comparing differences in adult basal adult gene expression among populations, and gene expression (all samples) among populations in larvae 
+
+Need dataframe with these columns: 
+- (x) group= c(all.pops, FB, DB, OB)  
+- (y) Term= enriched GO term 
+- (alpha) p.value.adjusted = enrichment analysis FDR adjusted p-values  
+- (color) high.transcripts = c(Greater, Fewer), aka the number of transcripts in high pCO2 compaerd to ambient 
+- (facet_grid) GO.category (biological processes vs. molecular function)
+- (labeller) GOterm_names 
+
+```{r}
+# ADULT ENRICHED BIOLOGICAL PROCESSES
+EnrBP.adult.pop.DB.high <- read_delim(file="../results/population-comparisons-july2021/adult_DB_higher_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Dabob Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Higher") %>%
+  mutate(stage="adult")
+
+EnrBP.adult.pop.DB.low <- read_delim(file="../results/population-comparisons-july2021/adult_DB_lower_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Dabob Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Lower") %>%
+  mutate(stage="adult")
+
+EnrBP.adult.pop.FB.high <- read_delim(file="../results/population-comparisons-july2021/adult_FB_higher_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Fidalgo Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Higher") %>%
+  mutate(stage="adult")
+
+EnrBP.adult.pop.OB.high <- read_delim(file="../results/population-comparisons-july2021/adult_OB_higher_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Oyster Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Higher") %>%
+  mutate(stage="adult")
+
+EnrBP.adult.pop.OB.low <- read_delim(file="../results/population-comparisons-july2021/adult_OB_lower_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Oyster Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Lower") %>%
+  mutate(stage="adult")
+
+# LARVAE ENRICHED BIOLOGICAL PROCESSES 
+
+EnrBP.larvae.pop.DB.high <- read_delim(file="../results/population-comparisons-july2021/larvae_DB_higher_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Dabob Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Higher") %>%
+  mutate(stage="larvae")
+
+# no lower DB 
+
+EnrBP.larvae.pop.FB.high <- read_delim(file="../results/population-comparisons-july2021/larvae_FB_higher_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Fidalgo Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Higher") %>%
+  mutate(stage="larvae")
+
+EnrBP.larvae.pop.FB.low <- read_delim(file="../results/population-comparisons-july2021/larvae_FB_lower_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Fidalgo Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Lower") %>%
+  mutate(stage="larvae")
+
+EnrBP.larvae.pop.OB.high <- read_delim(file="../results/population-comparisons-july2021/larvae_OB_higher_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Oyster Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Higher") %>%
+  mutate(stage="larvae")
+
+EnrBP.larvae.pop.OB.low <- read_delim(file="../results/population-comparisons-july2021/larvae_OB_lower_enrichedBP.txt", delim = "\t") %>% 
+  separate(into = c("GO", "process"), col=Term, "~") %>% clean_names() %>%
+  dplyr::select(go, process, count, genes, fold_enrichment, p_value, fdr) %>% 
+  mutate(perc_total=count/sum(count)) %>% 
+  mutate(group="Oyster Bay", GO.category="Biological Processes") %>%
+  mutate(abundance="Lower") %>%
+  mutate(stage="larvae")
+
+all.population.go.enriched <- rbind(
+ EnrBP.adult.pop.DB.high,
+ EnrBP.adult.pop.DB.low,
+ EnrBP.adult.pop.FB.high,
+ EnrBP.adult.pop.OB.high,
+ EnrBP.adult.pop.OB.low,
+ EnrBP.larvae.pop.DB.high,
+ EnrBP.larvae.pop.FB.high,
+ EnrBP.larvae.pop.FB.low,
+ EnrBP.larvae.pop.OB.high,
+ EnrBP.larvae.pop.OB.low)
+
+# Here I write out the merged enriched GO term dataframe so I can add a column by hand ("Abundance.HighPCO2") which indicates whether that process/function was more or less abundant in the High pCO2 treatment. 
+write.csv(all.population.go.enriched %>% left_join(GOslim, by=c("go"="GO_ID")), file="../results/population-comparisons-july2021/merged.population.go.enriched.csv")  
+
+pdf(file="../results/population-comparisons-july2021/enriched-processes-pop-bubble.pdf", height = 10, width = 7.5)
+all.population.go.enriched %>% 
+  complete(group, nesting(GO.category,abundance,stage)) %>% 
+  left_join(., GOslim[c(1,3)], by=c("go"="GO_ID")) %>%
+  mutate_at(c("group", "abundance", "stage", "go", "process", "GOSlim_bin"), funs(factor(.))) %>%
+  ggplot(aes(y=str_wrap(process),x=group:stage, col=abundance)) + 
+  geom_point(aes(alpha=fdr,size=count))+
+   scale_x_discrete(drop=FALSE) +
+facet_wrap(~GO.category,scales="free", nrow = 2) +
+  scale_alpha("FDR-adjusted\nP-value", range = c(1,0.3), 
+              breaks = c(.25, .5, .75, 1), guide = guide_legend(override.aes = list(size=4))) + 
+  scale_size("Gene count", range = c(3,12), breaks = c(2, 5, 10), 
+             guide = guide_legend(override.aes = list(col="gray50"))) + 
+  scale_color_manual(name="Abundance", values=c("#386cb0", "#984ea3"),
+             guide = guide_legend(override.aes = list(size=4))) +
+  theme_cleveland() + 
+  theme(axis.title.x=element_blank(), axis.text.x = element_blank(), 
+        axis.ticks.x = element_blank(), 
+        legend.position = "right", axis.text.y=element_text(size=7.25), 
+        plot.title = element_text(size=10)) +
+  ylab("Enriched Gene Ontology (GO) Term") + 
+  ggtitle("Enriched functions by populations\nin Adults & Larvae") +
+  geom_vline(xintercept = c(2.5, 4.5), colour="gray") +
+  annotate("text", x = 1.4, y = -2.5, label = "Dabob Bay", size=3, col="gray15") +
+  annotate("text", x = 3.5, y = -2.5, label = "Fidalgo Bay", size=3, col="gray15") +
+  annotate("text", x = 5.6, y = -2.5, label = "Oyster Bay", size=3, col="gray15") +
+  annotate("text", x = 1, y = -.25, label = "Adult", size=3, col="gray50") +
+  annotate("text", x = 2, y = -.25, label = "Larvae", size=3, col="gray50") +
+  annotate("text", x = 3, y = -.25, label = "Adult", size=3, col="gray50") +
+  annotate("text", x = 4, y = -.25, label = "Larvae", size=3, col="gray50") +
+  annotate("text", x = 5, y = -.25, label = "Adult", size=3, col="gray50") +
+  annotate("text", x = 6, y = -.25, label = "Larvae", size=3, col="gray50") +
+  coord_cartesian(clip = "off", ylim = c(-3, 77))
+dev.off()
+
+all.population.go.enriched %>% 
+  complete(group, nesting(GO.category,abundance,stage)) %>% left_join(., GOslim[c(1,3)], by=c("go"="GO_ID")) %>% 
+  mutate_at(c("group", "abundance", "stage", "go", "process", "GOSlim_bin"), funs(factor(.))) %>% View()
+```
+
+# QUESTION - DO THE GENES THAT DIFFER IN ADULT DABOB BAY VS OTHER POPULATIONS ALSO DIFFER IN LARVAE? 
+
+```{r}
+# adult genes that differ in DB vs other pops 
+dabob.adult <- c(rownames(diffex.adult.DBFB.amb), rownames(diffex.adult.DBOB1.amb)) %>% unique()
+length(dabob.adult) #number of genes uniquely abundant in Dabob Bay ADULTS vs other two pops 
+dabob.larvae <- c(rownames(diffex.larvae.DBFB), rownames(diffex.larvae.DBOB1)) %>% unique() 
+ 
+dabob.common <- Reduce(intersect, list(dabob.adult,dabob.larvae)) #genes that differ in adults that also differ in larvae = 42 
+
+# what do these genes do? Dang, only 9 are annotated 
+filter(Olurida_gene_uniprot, 
+       Name %in% dabob.common) %>% 
+  dplyr::select(contig, start, end, Name, Note, Ontology_term, SPID) %>%
+  filter(!is.na(SPID))
+
+# another way - by those that are higher (higher.cluster.adult.dabob) and lower (lower.cluster.adult.dabob)
+
+# Genes that are MORE abundant in dabob bay adults - and also different in larvae 
+filter(Olurida_gene_uniprot, 
+       Name %in% Reduce(intersect, list(rownames(higher.cluster.adult.dabob),dabob.larvae))) %>% 
+  dplyr::select(contig, start, end, Name, Note, Ontology_term, SPID) %>%
+  filter(!is.na(SPID))
+
+# Genes that are LESS abundant in dabob bay adults - and also different in larvae 
+filter(Olurida_gene_uniprot, 
+       Name %in% Reduce(intersect, list(rownames(lower.cluster.adult.dabob),dabob.larvae))) %>% 
+  dplyr::select(contig, start, end, Name, Note, Ontology_term, SPID) %>%
+  filter(!is.na(SPID))
+```
+
+```{r}
+# plot genes that are higher in Dabob Bay adults - are they also higher in larvae? 
+dabob.higher <- Reduce(intersect, list(rownames(higher.cluster.adult.dabob),dabob.larvae))
+dabob.higher.plots <- list()
+for (i in 1:length(dabob.higher)) {
+a <-  plotCounts(dds.larvae.DESeq, gene=dabob.higher[i], intgroup=c("population"), returnData = TRUE)
+b <- ggplot(a %>% rownames_to_column("sample"),
+       aes(x=population, y=count, color=population, label=sample)) +
+  geom_point(position=position_jitter(w = 0.1,h = 0)) +
+    geom_text() +
+    theme_bw() +
+    ggtitle(adult.p05.names[i]) +
+    theme(plot.title = element_text(hjust = 0.5))
+dabob.higher.plots[[i]] <- b
+}
+dabob.higher.plots
+
+# Heat map of these genes 
+larvae.high.dbadult <- assay(vsd.larvae)[dabob.higher,]
+pheatmap(larvae.high.dbadult, cluster_rows=T, show_rownames=FALSE, show_colnames=FALSE,
+         cluster_cols=F, annotation_col=vsd.larvae.df[1], scale="row", main = "Larval gene expression for\ngenes that are higher in Dabob Bay adults",
+         annotation_colors=list(population=c(`Dabob Bay` = "#4daf4a", `Fidalgo Bay` = "#377eb8", `Oyster Bay C1` = "#984ea3")))
+length(dabob.higher)
+# Next-  Make boxplot with average abundance for each gene by population 
+
+```
+
+```{r}
+
+
+# plot genes that are LOWER in Dabob Bay adults - are they also LOWER in larvae? 
+dabob.lower <- Reduce(intersect, list(rownames(lower.cluster.adult.dabob),dabob.larvae))
+dabob.lower.plots <- list()
+for (i in 1:length(dabob.lower)) {
+a <-  plotCounts(dds.larvae.DESeq, gene=dabob.lower[i], intgroup=c("population"), returnData = TRUE)
+b <- ggplot(a %>% rownames_to_column("sample"),
+       aes(x=population, y=count, color=population, label=sample)) +
+  geom_point(position=position_jitter(w = 0.1,h = 0)) +
+    geom_text() +
+    theme_bw() +
+    ggtitle(adult.p05.names[i]) +
+    theme(plot.title = element_text(hjust = 0.5))
+dabob.lower.plots[[i]] <- b
+}
+dabob.lower.plots
+length(dabob.lower)
+# Heat map of these genes 
+larvae.low.dbadult <- assay(vsd.larvae)[dabob.lower,]
+pheatmap(larvae.low.dbadult, cluster_rows=T, show_rownames=FALSE, show_colnames=FALSE,
+         cluster_cols=F, annotation_col=vsd.larvae.df[1], scale="row", main = "Genes lower in Dabob Bay adults\n(this is larval gene counts)",
+         annotation_colors=list(population=c(`Dabob Bay` = "#4daf4a", `Fidalgo Bay` = "#377eb8", `Oyster Bay C1` = "#984ea3")))
+
+# Make boxplot with average abundance for each gene by population 
+
+# FOR THE MOST PART - YES!  GENES THAT ARE HIGHER IN ADULTS ARE ALSO HIGHER IN LARVAE, AND LOWER IN ADULTS ALSO LOWER IN LARVAE! Not all, but most! 
+```
+
+```{r}
+pheatmap(assay(vsd.larvae)[c(dabob.lower, dabob.higher),], cluster_rows=F, show_rownames=FALSE, show_colnames=FALSE,
+         cluster_cols=F, annotation_col=vsd.larvae.df[1], scale="row", main = "Larval gene counts - genes differentially expressed in\nDabob Bay adults AND larvae", annotation_colors=list(population=c(`Dabob Bay` = "#4daf4a", `Fidalgo Bay` = "#377eb8", `Oyster Bay C1` = "#984ea3")))
+
+```
+
+## Boxplot - larval gene counts for those MORE abundant in Dabob Bay adults that are also larval DEGs 
+
+```{r}
+left_join(t(assay(vsd.larvae)[dabob.higher,]) %>% as.data.frame() %>% rownames_to_column(var="sample"),
+                    vsd.larvae.df %>% rownames_to_column(var = "sample"),
+          by = "sample") %>%
+  group_by(population) %>%
+  summarise_if(is.numeric, mean) %>%
+  pivot_longer(cols = c(-population)) %>%
+  # mutate(pCO2.parent=gsub("Ambient", "Control", pCO2.parent)) %>%
+  # mutate(pCO2.parent=gsub("High", "Acidification", pCO2.parent)) %>%
+  mutate(population=gsub("Oyster Bay C1", "Oyster Bay", population)) %>%
+  
+  ggplot(aes(x=population, y=value, fill=population)) + 
+  geom_boxplot(alpha=0.55, width=0.5) +
+  geom_dotplot(binaxis='y', stackdir='center', alpha=0.3) + 
+  scale_fill_manual(values=c("#4daf4a","#377eb8", "#984ea3"), name="Population") +
+  theme_bw(base_size = 12) + 
+  theme(plot.title = element_text(size = 11.5, hjust = 0, colour = "gray30"), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), panel.background = element_blank(), 
+        axis.title.x = element_blank(), legend.position="right", axis.text.x = element_text(size=10)) +  
+          labs(title=(expression(paste("Larval transcript counts for DEGs that are more abundant in Dabob Bay adults"))),  # by ", pCO[2], " exposure & cohort
+               y=expression("Mean transcript abundance (normalized)")) +
+      stat_summary(fun.y=mean, geom="point", shape=22, size=3, color="black", fill="black")
+#population=c(`Dabob Bay` = "#4daf4a", `Fidalgo Bay` = "#377eb8", `Oyster Bay C1` = "#984ea3"
+```
+
+## Boxplot - larval gene counts for those LESS abundant in Dabob Bay adults that are also larval DEGs 
+
+```{r}
+left_join(t(assay(vsd.larvae)[dabob.lower,]) %>% as.data.frame() %>% rownames_to_column(var="sample"),
+                    vsd.larvae.df %>% rownames_to_column(var = "sample"),
+          by = "sample") %>%
+  group_by(population) %>%
+  summarise_if(is.numeric, mean) %>%
+  pivot_longer(cols = c(-population)) %>%
+  # mutate(pCO2.parent=gsub("Ambient", "Control", pCO2.parent)) %>%
+  # mutate(pCO2.parent=gsub("High", "Acidification", pCO2.parent)) %>%
+  mutate(population=gsub("Oyster Bay C1", "Oyster Bay", population)) %>%
+  
+  ggplot(aes(x=population, y=value, fill=population)) + 
+  geom_boxplot(alpha=0.55, width=0.5) +
+  geom_dotplot(binaxis='y', stackdir='center', alpha=0.3) + 
+  scale_fill_manual(values=c("#4daf4a","#377eb8", "#984ea3"), name="Population") +
+  theme_bw(base_size = 12) + 
+  theme(plot.title = element_text(size = 11.5, hjust = 0, colour = "gray30"), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), panel.background = element_blank(), 
+        axis.title.x = element_blank(), legend.position="right", axis.text.x = element_text(size=10)) +  
+          labs(title=(expression(paste("Larval transcript counts for DEGs that are LESS abundant in Dabob Bay adults"))),  # by ", pCO[2], " exposure & cohort
+               y=expression("Mean transcript abundance (normalized)")) +
+      stat_summary(fun.y=mean, geom="point", shape=22, size=3, color="black", fill="black")
+#population=c(`Dabob Bay` = "#4daf4a", `Fidalgo Bay` = "#377eb8", `Oyster Bay C1` = "#984ea3"
+```
+
+```{r}
+# How many of the 59 larval DEGs overlap with the 89 DEGs in adult DBvs the other 2 populations?  3 
+degs.dabob.both <- 
+Reduce(intersect, list(
+  Reduce(intersect, list(rownames(diffex.larvae.DBFB),rownames(diffex.larvae.DBOB1))),
+  Reduce(intersect, list(rownames(diffex.adult.DBFB.amb),rownames(diffex.adult.DBOB1.amb))))) 
+
+# Are these 3 genes annotated? Just one 
+filter(Olurida_gene_uniprot, 
+       Name %in% degs.dabob.both) %>%
+  filter(!is.na(SPID))
+```
+
+# How many of the adult/larval common genes follow the same high/low pattern? What do they do? 
+
+```{r}
+Reduce(intersect, list(rownames(higher.cluster.larvae.dabob),rownames(higher.cluster.adult.dabob))) %>% length() #higher in both adult & larvae 
+Reduce(intersect, list(rownames(lower.cluster.larvae.dabob),rownames(lower.cluster.adult.dabob))) %>% length() #lower in both adult & larvae 
+
+# How many of the 26 genes that were constitutively more active in both adults & larvae are annotateD? what do they do?  
+# 6 genes 
+filter(Olurida_gene_uniprot, 
+       Name %in% Reduce(intersect, list(rownames(higher.cluster.larvae.dabob),rownames(higher.cluster.adult.dabob)))) %>%
+  filter(!is.na(SPID)) %>%  dplyr::select(Name, SPID, Note) %>% mutate(Note=gsub("Note=Similar to ", "", Note))
+
+# How many of the 26 genes that were constitutively more active in both adults & larvae are annotateD? what do they do?  
+# 2 genes 
+filter(Olurida_gene_uniprot, 
+       Name %in% Reduce(intersect, list(rownames(lower.cluster.larvae.dabob),rownames(lower.cluster.adult.dabob)))) %>%
+  filter(!is.na(SPID)) %>%  dplyr::select(Name, SPID, Note) %>% mutate(Note=gsub("Note=Similar to ", "", Note))
+```
+

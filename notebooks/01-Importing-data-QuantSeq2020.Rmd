@@ -67,6 +67,7 @@ counts <- counts %>%
 
 save(counts, file = "../results/gene-counts") #save R object with all gene counts, before filtering, removing samples, etc. 
 ```
+
 ### Summarize counts and visualize (remove last column - that's undetermined counts)
 
 ```{r}
@@ -160,6 +161,13 @@ nrow(key.filtered)
 nrow(key.filtered) == ncol(counts.filtered) #should = TRUE.
 save(key.filtered, file="../raw-data/key.filtered") #save key object. IMPORTANT: this needs to be done here AFTER filtering out whole samples 
 ```
+```{r}
+key.filtered %>% filter(stage=="adult") %>% group_by(stage, population, pCO2.parent) %>% tally()
+key.filtered %>% filter(stage=="larvae") %>% group_by(stage, population, pCO2.parent) %>% tally()
+key.filtered %>% filter(stage=="larvae") %>% group_by(stage, population, temp.parent) %>% tally()
+5+10+5+5+13+11+7
+```
+
 
 ```{r}
 ggplotly(ggplot(data = data.frame(colSums(counts.filtered)) %>%
@@ -215,7 +223,6 @@ Olurida_gene_uniprot <- read_delim(file = here::here("references", "Olurida_v081
   #remove extraneous info from Olur gene ID and Uniprot species ID ("SPID")
   mutate(Name=str_remove(Name, "Name=")) %>% mutate(Name=str_remove(Name, ";")) %>%
   mutate(SPID=str_remove(SPID, "SPID=")) %>% mutate(SPID=str_remove(SPID, ";"))
-
 save(Olurida_gene_uniprot, file = "../references/Olurida_gene_uniprot")
 ```
 
@@ -226,3 +233,22 @@ GOslim<- read_delim(file = here::here("references", "GO-GOslim.sorted"), delim =
 colnames(GOslim) <- GOslim[nrow(GOslim),]
 save(GOslim, file="../references/GOslim")
 ```
+
+## How many genes detected in adult samples? larval samples? 
+NOT FINISHED NEED TO DO THIS! BUT SHOULD I FILTER AT ALL FIRST? E.G. IF ONLY 1 READ ACROSS ALL SAMPLES, WAS THAT "DETECTED"?
+
+```{r}
+test <- rowSums(counts.filtered %>% dplyr::select(adult.samples)) >= 0
+(counts.filtered %>% dplyr::select(adult.samples))[test,] %>% nrow()
+
+test <- rowSums(counts.filtered %>% dplyr::select(larval.samples)) <= 10
+(counts.filtered %>% dplyr::select(larval.samples))[test,] %>% nrow()
+```
+
+# How many genes in Oly genome? 
+
+```{r}
+Olurida_gene_uniprot %>% nrow() #32,210 genes 
+Olurida_gene_uniprot %>% filter(!is.na(SPID)) %>% nrow() #16,284 annotated 
+```
+
